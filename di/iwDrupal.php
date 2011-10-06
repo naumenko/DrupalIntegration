@@ -45,7 +45,7 @@ require ("iwDrupalConfig.php");
 $wgExtensionCredits['other'][] = array('name' => 'Drupal Integration',
     'author' => 'Anton Naumenko', 'description' =>
     'Drupal Integration to MediaWiki. MediaWiki is a master for user accounts and logging in.',
-    'url' => 'http://designvmeste.com.ua/DrupalIntegration', 'version' => '0.0.7', );
+    'url' => 'http://designvmeste.com.ua/DrupalIntegration', 'version' => '0.0.8', );
 
 $wgExtensionFunctions[] = 'wfDrupalIntegration';
 /**
