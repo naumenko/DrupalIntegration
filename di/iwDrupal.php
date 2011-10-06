@@ -2,11 +2,11 @@
 /**
  * iwDrupal.php
  * 
- * @version 0.0.7 - 2009-03-16
+ * @version 0.0.9 - 2009-03-16
  * Drupal Integration to MediaWiki. MediaWiki is a master for user accounts and logging in.
  *
- * @author Anton Naumenko 2009
- * @copyright Copyright (c) 2009, Anton Naumenko
+ * @author Anton Naumenko 2009-2011
+ * @copyright Copyright (c) 2009-2011, Anton Naumenko
  * The following code was ananlyzed and reused:
  *
  * - Make a Drupal site use Basic Auth/ldap instead of the normal login block
@@ -45,7 +45,7 @@ require ("iwDrupalConfig.php");
 $wgExtensionCredits['other'][] = array('name' => 'Drupal Integration',
     'author' => 'Anton Naumenko', 'description' =>
     'Drupal Integration to MediaWiki. MediaWiki is a master for user accounts and logging in.',
-    'url' => 'http://designvmeste.com.ua/DrupalIntegration', 'version' => '0.0.8', );
+    'url' => 'http://designvmeste.com.ua/DrupalIntegration', 'version' => '0.0.9', );
 
 $wgExtensionFunctions[] = 'wfDrupalIntegration';
 /**
@@ -57,6 +57,8 @@ function wfDrupalIntegration() {
     global $wgHooks;
     $wgHooks['UserRights'][] = 'IwDrupal::userRights';
     $wgHooks['UserSetCookies'][] = 'IwDrupal::userSetCookies';
+	$wgHooks['UserSetEmailAuthenticationTimestamp'][] = 'IwDrupal::afterEmailConfirmation';
+	$wgHooks['UserSetEmail'][] = 'IwDrupal::afterUserSetEmail';
 }
 
 /**
@@ -190,4 +192,28 @@ class IwDrupal {
                 "') ", $link);
         return $forum_id;
     }
+  static function afterEmailConfirmation($user, &$timestamp) { 
+    global $iwParameters;
+    global $wgEmailAuthentication;
+    if (!$wgEmailAuthentication) return true;
+    if (!$timestamp) return true;
+    $email = $user->getEmail();
+    self::updateUserEmail($email, $user->getID());
+    return true;
+  }
+  static function afterUserSetEmail( $user, &$email ) { 
+    global $wgEmailAuthentication;
+    if ($wgEmailAuthentication) return true;
+    self::updateUserEmail($email, $user->getID());
+    return true;
+  }
+  static function updateUserEmail($email, $user_id){
+     global $iwParameters;
+   //connect to Drupal db and update email
+    $link = mysql_connect($iwParameters['DrupalDBserver'], $iwParameters['DrupalDBuser'], $iwParameters['DrupalDBpassword']);
+    mysql_select_db($iwParameters['DrupalDBname'], $link) or die("cannot select db");
+    mysql_query("update ".$iwParameters['DrupalDBprefix']."users set mail='".mysql_real_escape_string($email)."' where uid = ".(int)$user_id
+                ,$link);
+    return true;
+  }  
 }
