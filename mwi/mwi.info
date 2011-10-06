@@ -1,0 +1,5 @@
+name = Drupal Integration
+description = Drupal Integration to MediaWiki. MediaWiki is a master for user accounts and logging in.
+package = mediawiki
+core = 6.x
+version = "6.x-0.3"

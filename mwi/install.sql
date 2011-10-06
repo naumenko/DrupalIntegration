@@ -1,0 +1,1 @@
+ALTER TABLE `users` ADD `wid` INT( 10 ) NOT NULL DEFAULT '-1';

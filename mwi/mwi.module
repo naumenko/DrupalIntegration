@@ -1,0 +1,252 @@
+<?php
+/**
+ * mwi module (MediaWiki Integration)
+ * 
+ * @version 0.0.7 - 2009-03-16
+ * Drupal Integration to MediaWiki. MediaWiki is a master for user accounts and logging in.
+ *
+ * @author Anton Naumenko 2009
+ * @copyright Copyright (c) 2009, Anton Naumenko
+ * The following code was ananlyzed and reused:
+ *
+ * - Make a Drupal site use Basic Auth/ldap instead of the normal login block
+ *   http://drupal.org/node/111768
+ *
+ * - AuthDrupal - Signin integration for MediaWiki as slave of Drupal.
+ *   http://www.mediawiki.org/wiki/Extension:AuthDrupal
+ *
+ * @license GPLv2
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ *  59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+ * http://www.gnu.org/copyleft/gpl.html
+ *
+ */
+ /**
+ * The main functionality of MWI module. It does user authentication based on session and cookie setup by MediaWiki.
+ */
+// Get mwi config params 
+require ("mwi.config");
+
+/**
+ * mwi_help() is implementation of hook_help().
+ */
+function mwi_help($path, $arg) {
+    switch ($path) {
+        case 'admin/help#mwi':
+            $output = '<p>' . t('The mwi module integrates drupal into MediaWiki with single sign on. MediaWiki is a master for user accounts.') .
+                '</p>';
+            return $output;
+    }
+}
+
+/**
+ * mwi_init() is implementation of hook_init(). The core of mwi module. Here we try to authenticate user every page load.
+ * @see http://drupal.org/node/111768 for the sample
+ */
+function mwi_init() {
+    global $user;
+    //if in debug mode, let us see the content of session and cookies
+    if ($GLOBALS['iwDebug']) {
+        if ($GLOBALS['iwDebug'])
+            error_log("session id = " . session_id());
+        if ($GLOBALS['iwDebug'])
+            error_log("cookie wid = " . $_COOKIE[$GLOBALS['wgCookiePrefix'] . "UserID"]);
+        if ($GLOBALS['iwDebug'])
+            error_log("session wid = " . $_SESSION['wsUserID']);
+        if ($GLOBALS['iwDebug'])
+            error_log("cookie wname = " . $_COOKIE[$GLOBALS['wgCookiePrefix'] . "UserName"]);
+        if ($GLOBALS['iwDebug'])
+            error_log("session wname = " . $_SESSION['wsUserName']);
+        if ($GLOBALS['iwDebug'])
+            error_log("cookie wtoken = " . $_COOKIE[$GLOBALS['wgCookiePrefix'] .
+                "Token"]);
+        if ($GLOBALS['iwDebug'])
+            error_log("session wtoken = " . $_SESSION['wsToken']);
+    }
+
+    // Get mw user id from MediaWiki session or cookie.
+    $user_tid = iwGetMwUserIdFromSession();
+    // If it is not there then we log in user as anonymous or redirect to login screen.
+    if ($user_tid === false) {
+        if ($GLOBALS['wgAllowAnonymousBrowsingOfDrupal'])
+            iwLoginDrupalAnon();
+        else
+            iwRedirectToLogin();
+        return;
+    }
+    // Get mw user record from MediaWiki database by user's id.
+    $row = iwGetMwUserFromDB($user_tid);
+    // If it is not there then we log in user as anonymous or redirect to login screen.
+    if ($row === array()) {
+        if ($GLOBALS['wgAllowAnonymousBrowsingOfDrupal'])
+            iwLoginDrupalAnon();
+        else
+            iwRedirectToLogin();
+        return;
+    }
+    // Get user token from MediaWiki session or cookie.
+    $user_token = iwGetMwUserTokenFromSession($user_tid, $row);
+    // If it is not there then we log in user as anonymous or redirect to login screen.
+    if ($user_token === false) {
+        if ($GLOBALS['wgAllowAnonymousBrowsingOfDrupal'])
+            iwLoginDrupalAnon();
+        else
+            iwRedirectToLogin();
+        return;
+    }
+    // If we get here then we have user's id and token in MediaWiki session or cookie and such user exists in MediaWiki database.
+    // This means we have to automatically log in user into Drupal.
+    require_once './includes/common.inc';
+    require_once './includes/theme.inc';
+    $result = db_fetch_object(db_query('SELECT u.uid,u.name FROM {users} u WHERE u.wid = \'%s\'',
+        $user_tid));
+    // User doesn't exist in Drupal database.  Get user info from MediaWiki record and add user to Drupal database.
+    if (!$result->uid) {
+        $user_mail = $row['user_email'];
+        $user_name = $row['user_name'];
+        $user_number = $row['user_id'];
+        // Use replace instead of insert to avoid errors in the event the uid has been added ahead of time, such as in the case of the administrators...
+        db_query("REPLACE INTO {users} (uid,wid,name,mail,status,created) VALUES (%d,'%s','%s','%s',1,%d)",
+            $user_number, $user_tid, $user_name, $user_mail, time());
+    }
+    else {
+        // User exists in Drupal database.  Set user info from there.
+        $user_name = $result->name;
+        $user_number = $result->uid;
+    }
+    // Log in, updating logs and redirecting to where the user requested, or home. Good stuff stolen from persistent login module.
+    // Uncomment if you want to show the message of succesful SSO.
+    // drupal_set_message(t('Authenticated via MediaWiki.  Welcome %name.', array('%name' => check_plain($user_name))));
+    $l = array('mwi_login' => 1, 'name' => $user_name, 'uid' => $user_number);
+    drupal_load('module', 'user');
+    $user = user_load(array('uid' => $l['uid']));
+    user_login_submit('mwi_login', $l);
+    if ($user->uid > 0) {
+        return;
+    }
+    drupal_goto(substr(drupal_get_destination(), 12));
+}
+/**
+ * iwGetMwUserIdFromSession() gets user's id from session or cookie.
+ * The code is a rewrite from MediaWiki's User::loadFromSession()
+ * @see http://svn.wikimedia.org/doc/classUser.html#01949ef9e522327c7d13292b792b2f07
+ * @return mixed integer|false user id or false if none
+ */
+function iwGetMwUserIdFromSession() {
+    if (isset($_COOKIE[$GLOBALS['wgCookiePrefix'] . "UserID"])) {
+        $sId = intval($_COOKIE[$GLOBALS['wgCookiePrefix'] . "UserID"]);
+        if (isset($_SESSION['wsUserID']) && $sId != $_SESSION['wsUserID']) {
+            return false;
+        }
+        //$_SESSION['wsUserID'] = $sId;
+    }
+    else
+        if (isset($_SESSION['wsUserID'])) {
+            if ($_SESSION['wsUserID'] != 0) {
+                $sId = $_SESSION['wsUserID'];
+            }
+            else {
+                return false;
+            }
+        }
+        else {
+            return false;
+        }
+    return $sId;
+}
+/**
+ * iwGetMwUserFromDB() gets user's record from MediaWiki database.
+ * @param integer $user_tid user id in MedaiWiki database
+ * 
+ * @return array associative array of the user record. If there is no user the empty array is returned.
+ */
+function iwGetMwUserFromDB($user_tid) {
+    //connect to MW db and get info about the user
+    $row = array();
+    $link = mysql_connect($GLOBALS['wgDBserver'], $GLOBALS['wgDBuser'], $GLOBALS['wgDBpassword']);
+    mysql_select_db($GLOBALS['wgDBname'], $link) or die("cannot select db");
+    $result = mysql_query("SELECT * FROM " . $GLOBALS['wgDBprefix'] .
+        "user where user_id=" . (int)$user_tid, $link);
+    if (!$result)
+        return array();
+    if (mysql_num_rows($result) == 0)
+        return array();
+    $row = mysql_fetch_assoc($result);
+    mysql_free_result($result);
+    //mysql_close($link);
+    return $row;
+}
+/**
+ * iwGetMwUserTokenFromSession() gets user's id from session or cookie.
+ * The code is a rewrite from MediaWiki's User::loadFromSession()
+ * @see http://svn.wikimedia.org/doc/classUser.html#01949ef9e522327c7d13292b792b2f07
+ * @return mixed integer|false user token or false if none or token does not match the password
+ */
+function iwGetMwUserTokenFromSession($sId, $row) {
+    if (isset($_SESSION['wsUserName'])) {
+        $sName = $_SESSION['wsUserName'];
+    }
+    else
+        if (isset($_COOKIE[$GLOBALS['wgCookiePrefix'] . "UserName"])) {
+            $sName = $_COOKIE[$GLOBALS['wgCookiePrefix'] . "UserName"];
+            //$_SESSION['wsUserName'] = $sName;
+        }
+        else {
+            return false;
+        }
+    $passwordCorrect = false;
+
+    if (isset($_SESSION['wsToken'])) {
+        $passwordCorrect = $_SESSION['wsToken'] == $row['user_token'];
+    }
+    else
+        if (isset($_COOKIE[$GLOBALS['wgCookiePrefix'] . "Token"])) {
+            $passwordCorrect = $row['user_token'] == $_COOKIE[$GLOBALS['wgCookiePrefix'] .
+                "Token"];
+        }
+        else {
+            // No session or persistent login cookie
+            return false;
+        }
+    if (($sName == $row['user_name']) && $passwordCorrect) {
+        //$_SESSION['wsToken'] = $row['user_token'];
+        return true;
+    }
+    else {
+        // Invalid credentials
+        return false;
+    }
+}
+/**
+ * iwRedirectToLogin() redirects the user to login path. The path is given in 
+ * $GLOBALS['wgPathToLogin'] configuration parameter.
+ */
+function iwRedirectToLogin() {
+    drupal_goto($GLOBALS['wgPathToLogin']);
+}
+/**
+ * iwLoginDrupalAnon() signs the user in as anonymous.
+ */
+function iwLoginDrupalAnon() {
+    global $user;
+
+    watchdog('user', 'Session closed for %name.', array('%name' => $user->name));
+
+    // Destroy the current session:
+    session_destroy();
+    module_invoke_all('user', 'logout', null, $user);
+
+    // Load the anonymous user
+    $user = drupal_anonymous_user();
+}

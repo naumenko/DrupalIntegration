@@ -1,0 +1,120 @@
+<?php
+/**
+ * This is a HACK. It does not create anything into the database of Drupal. 
+ * Upon installing the module it tries to do batch copying of users and user-to-group assignments.
+ */
+// Get config params
+require("mwi.config");
+
+
+/**
+ * Implementation of hook_schema(). This triggers warnings that should be ignored.
+ * @todo make it run without warnings in drupal
+ */
+function mwi_schema() {
+  //transfer MW and VOP groups to drupal roles and map user-to-group relations
+  if ($GLOBALS['iwDebug']) error_log("schema");
+  return array();
+  
+}
+
+/**
+ * Implementation of hook_install(). Copies users, groups and user-to-group assignemnts to Drupal DB.
+ * Warning is displayed in Drupal when If user, group or assignment is already in Drupal database. 
+ * These warnings should be ignored. This is intentional in order to not generate queries to Drupal database
+ * in order to check if user or assignment is already there.
+ * @todo supress known warnings or make checks of existence.
+ */
+function mwi_install() {
+  //transfer MW and VOP groups to drupal roles and map user-to-group relations
+  if ($GLOBALS['iwDebug']) error_log("installing");
+  if (iwTransferMwUsersToDrupal()){
+    if ($GLOBALS['iwDebug']) error_log("users Transferd");
+  } else {
+    if ($GLOBALS['iwDebug']) error_log("users were not Transferd");
+    return;
+  }
+  //native wiki groups
+  if (iwTransferMwGroupsToDrupal()){
+    if ($GLOBALS['iwDebug']) error_log("groups to roles Transferd");
+  } else {
+    if ($GLOBALS['iwDebug']) error_log("groups to roles were not Transferd");
+    return;
+  }
+  if (iwTransferMwUsers2GroupsToDrupal()){
+    if ($GLOBALS['iwDebug']) error_log("user2groups to users2roles Transferd");
+  } else {
+    if ($GLOBALS['iwDebug']) error_log("user2groups to users2roles were not Transferd");
+    return;
+  }
+}
+/**
+ * Implementation of hook_install().
+ * mwi_uninstall() does nothing.
+ */
+function mwi_uninstall() {
+  // Drop my tables.
+  if ($GLOBALS['iwDebug']) error_log("uninstalling");
+  //drupal_uninstall_schema('mwi');
+}  
+/**
+ * iwTransferMwUsersToDrupal() gets all users from MediaWiki and inserts them into Drupal.
+ */
+function iwTransferMwUsersToDrupal(){
+  //connect to MW db and get info about the user
+  $row = array();
+  $link = mysql_connect($GLOBALS['wgDBserver'], $GLOBALS['wgDBuser'], $GLOBALS['wgDBpassword']);
+  mysql_select_db($GLOBALS['wgDBname'], $link) or die("cannot select db");
+  $result = mysql_query("SELECT * FROM ".$GLOBALS['wgDBprefix']."user ",$link);
+  if (!$result) return false;
+  if (mysql_num_rows($result) == 0) return false;
+  while ($row = mysql_fetch_assoc($result)){
+    $user_mail = $row['user_email'];
+    $user_name = $row['user_name'];
+    $user_number = $row['user_id'];
+    db_query("REPLACE INTO {users} (uid,wid,name,mail,status,created) VALUES (%d,'%s','%s','%s',1,%d)",$user_number,$user_number,$user_name,$user_mail,time());
+  }
+  mysql_free_result($result);
+  //mysql_close($link);
+  return true;
+}
+/**
+ * iwTransferMwGroupsToDrupal() gets all groups from MediaWiki and inserts them into Drupal.
+ * @todo trnasfer of wiki groups that are not assigned to users but in deined in config files
+ */
+function iwTransferMwGroupsToDrupal(){
+  //connect to MW db and get info about the user
+  $row = array();
+  $link = mysql_connect($GLOBALS['wgDBserver'], $GLOBALS['wgDBuser'], $GLOBALS['wgDBpassword']);
+  mysql_select_db($GLOBALS['wgDBname'], $link) or die("cannot select db");
+  $result = mysql_query("SELECT distinct ug_group FROM ".$GLOBALS['wgDBprefix']."user_groups ",$link);
+  if (!$result) return false;
+  if (mysql_num_rows($result) == 0) return false;
+  while ($row = mysql_fetch_assoc($result)){
+    $group_name = $row['ug_group'];
+    db_query("INSERT INTO {role} (name) VALUES ('%s')",$group_name);
+  }
+  mysql_free_result($result);
+  //mysql_close($link);
+  return true;
+}
+/**
+ * iwTransferMwUsers2GroupsToDrupal() gets all user-to-group assignments from MediaWiki and inserts them into Drupal.
+ */
+function iwTransferMwUsers2GroupsToDrupal(){
+  //connect to MW db and get info about the user
+  $row = array();
+  $link = mysql_connect($GLOBALS['wgDBserver'], $GLOBALS['wgDBuser'], $GLOBALS['wgDBpassword']);
+  mysql_select_db($GLOBALS['wgDBname'], $link) or die("cannot select db");
+  $result = mysql_query("SELECT ug_user, ug_group FROM ".$GLOBALS['wgDBprefix']."user_groups ",$link);
+  if (!$result) return false;
+  if (mysql_num_rows($result) == 0) return false;
+  while ($row = mysql_fetch_assoc($result)){
+    $group_name = $row['ug_group'];
+    $user_id = $row['ug_user'];
+    db_query("INSERT INTO {users_roles} (uid, rid) SELECT %d,rid from {role} r where r.name='%s' ",$user_id,$group_name);
+  }
+  mysql_free_result($result);
+  //mysql_close($link);
+  return true;
+}
