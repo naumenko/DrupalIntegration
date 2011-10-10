@@ -114,7 +114,7 @@ class IwDrupal {
             //last insert user-to-group assignment to user-to-role relation on Drupal
 			$query = "INSERT into " . $iwParameters['DrupalDBprefix'] .
                 "users_roles (uid, rid) SELECT " . (int)$user->getId() .
-                ",rid from role r where r.name='" . mysql_real_escape_string($group_name) . "'";
+                ",rid from ".$iwParameters['DrupalDBprefix']."role r where r.name='" . mysql_real_escape_string($group_name) . "'";
 			if ($iwParameters['iwDebug']) error_log("in addUserToGroupsInDrupal - query to insert user2role assignment if new = ".$query);
 			mysql_query($query, $link);
         }
