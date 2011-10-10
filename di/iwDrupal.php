@@ -2,7 +2,7 @@
 /**
  * iwDrupal.php
  * 
- * @version 0.0.9 - 2009-03-16
+ * @version 0.0.10 - 2011-10-10
  * Drupal Integration to MediaWiki. MediaWiki is a master for user accounts and logging in.
  *
  * @author Anton Naumenko 2009-2011
@@ -139,7 +139,7 @@ class IwDrupal {
 			if ($iwParameters['iwDebug']) error_log("in addUserToGroupsInDrupal - group = ".$group_name);
 			$query = "delete from " . $iwParameters['DrupalDBprefix'] .
                 "users_roles where uid = " . (int)$user->getId() .
-                " and rid IN(SELECT rid from role r where r.name='" . mysql_real_escape_string($group_name) .
+                " and rid IN(SELECT rid from ".$iwParameters['DrupalDBprefix']."role r where r.name='" . mysql_real_escape_string($group_name) .
                 "')";
 			if ($iwParameters['iwDebug']) error_log("in removeUserToGroupsInDrupal - query to delete user2role assignment = ".$query);
             mysql_query($query, $link);
